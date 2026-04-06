@@ -4,6 +4,7 @@ const colorMap: Record<string, string> = {
   red: 'bg-red-100 text-red-700',
   gray: 'bg-gray-100 text-gray-700',
   yellow: 'bg-yellow-100 text-yellow-700',
+  purple: 'bg-purple-100 text-purple-700',
 };
 
 interface BadgeProps {
