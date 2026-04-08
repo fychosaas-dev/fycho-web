@@ -26,10 +26,21 @@ interface Factura {
 
 interface SelectOption { id: string; nombre: string }
 
+interface ReservaCompletada {
+  id: string;
+  fecha_hora: string;
+  cliente_nombre: string;
+  servicio: { nombre: string } | null;
+}
+
 type GenerarPeriodicaForm = {
   cliente_id: string;
   periodo_inicio: string;
   periodo_fin: string;
+};
+
+type GenerarServicioForm = {
+  reserva_id: string;
 };
 
 const estadoColor: Record<string, string> = {
@@ -47,35 +58,40 @@ const ESTADOS = [
   { value: 'pagada', label: 'Pagada' },
 ];
 
-const TIPOS = [
-  { value: '', label: 'Todos' },
-  { value: 'periodica', label: 'Periódica' },
-  { value: 'servicio', label: 'Servicio' },
-];
-
 // --- Page ---
 
 export default function FacturacionPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'teams' | 'demand'>('teams');
   const [filtroEstado, setFiltroEstado] = useState('');
-  const [filtroTipo, setFiltroTipo] = useState('');
   const [filtroFecha, setFiltroFecha] = useState('');
-  const [generarModal, setGenerarModal] = useState(false);
+  const [generarPeriodicaModal, setGenerarPeriodicaModal] = useState(false);
+  const [generarServicioModal, setGenerarServicioModal] = useState(false);
+
+  // Tipo is implicit per tab: Teams → periodica, Demand → servicio
+  const tipoImplicito = tab === 'teams' ? 'periodica' : 'servicio';
 
   // Build query params
   const params = new URLSearchParams({ per_page: '50' });
+  params.set('tipo', tipoImplicito);
   if (filtroEstado) params.set('estado', filtroEstado);
-  if (filtroTipo) params.set('tipo', filtroTipo);
-  if (filtroFecha) params.set('fecha', filtroFecha);
-  params.set('modulo', tab);
+  if (filtroFecha) {
+    // Backend expects desde/hasta (datetime). Use the selected day as a 1-day window.
+    params.set('desde', `${filtroFecha}T00:00:00.000Z`);
+    params.set('hasta', `${filtroFecha}T23:59:59.999Z`);
+  }
 
   // Fetch facturas
-  const { data: facturasRes, isLoading } = useQuery({
-    queryKey: ['facturas', tab, filtroEstado, filtroTipo, filtroFecha],
+  const { data: facturasRes, isLoading, error: facturasError } = useQuery({
+    queryKey: ['facturas', tab, filtroEstado, filtroFecha],
     queryFn: () => api.get<Factura[]>(`/api/billing/facturas?${params.toString()}`),
   });
   const facturas = facturasRes?.data ?? [];
+
+  // Debug: log API responses to help diagnose Bug 3
+  if (typeof window !== 'undefined') {
+    console.log('[facturacion] tab=', tab, 'tipo=', tipoImplicito, 'facturas=', facturas.length, 'error=', facturasError);
+  }
 
   // Fetch clientes for modal
   const { data: clientesRes } = useQuery({
@@ -83,6 +99,14 @@ export default function FacturacionPage() {
     queryFn: () => api.get<SelectOption[]>('/api/config/clientes?activo=true'),
   });
   const clientes = clientesRes?.data ?? [];
+
+  // Fetch reservas completadas for Demand modal
+  const { data: reservasRes } = useQuery({
+    queryKey: ['reservas-completadas'],
+    queryFn: () => api.get<ReservaCompletada[]>('/api/demand/reservas?estado=completada&per_page=100'),
+    enabled: generarServicioModal,
+  });
+  const reservasCompletadas = reservasRes?.data ?? [];
 
   // Check if ERP is configured
   const { data: erpConfigRes } = useQuery({
@@ -96,7 +120,16 @@ export default function FacturacionPage() {
     mutationFn: (body: Record<string, unknown>) => api.post('/api/billing/facturas/generar-periodica', body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['facturas'] });
-      setGenerarModal(false);
+      setGenerarPeriodicaModal(false);
+    },
+  });
+
+  // Generate servicio mutation (Demand)
+  const generarServicio = useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.post('/api/billing/facturas/generar-servicio', body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['facturas'] });
+      setGenerarServicioModal(false);
     },
   });
 
@@ -126,13 +159,21 @@ export default function FacturacionPage() {
           <h1 className="text-2xl font-bold text-gray-900">Facturación</h1>
           <p className="text-gray-500 mt-1">Generación y gestión de facturas.</p>
         </div>
-        {tab === 'teams' && (
+        {tab === 'teams' ? (
           <button
-            onClick={() => setGenerarModal(true)}
+            onClick={() => setGenerarPeriodicaModal(true)}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
           >
             <Plus className="w-4 h-4" />
             Generar factura periódica
+          </button>
+        ) : (
+          <button
+            onClick={() => setGenerarServicioModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Generar factura por servicio
           </button>
         )}
       </div>
@@ -172,18 +213,6 @@ export default function FacturacionPage() {
           >
             {ESTADOS.map((e) => (
               <option key={e.value} value={e.value}>{e.label}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="text-sm font-medium text-gray-600 mr-2">Tipo:</label>
-          <select
-            value={filtroTipo}
-            onChange={(e) => setFiltroTipo(e.target.value)}
-            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-            {TIPOS.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
             ))}
           </select>
         </div>
@@ -301,18 +330,31 @@ export default function FacturacionPage() {
         </div>
       )}
 
-      {/* Generate modal */}
-      <Modal open={generarModal} onClose={() => setGenerarModal(false)} title="Generar factura periódica">
+      {/* Generate periódica modal (Teams) */}
+      <Modal open={generarPeriodicaModal} onClose={() => setGenerarPeriodicaModal(false)} title="Generar factura periódica">
         <GenerarPeriodicaFormModal
           clientes={clientes}
           onSubmit={(data) => {
             generarPeriodica.mutate({
               cliente_id: data.cliente_id,
-              periodo_inicio: data.periodo_inicio,
-              periodo_fin: data.periodo_fin,
+              periodo_inicio: `${data.periodo_inicio}T00:00:00.000Z`,
+              periodo_fin: `${data.periodo_fin}T23:59:59.999Z`,
             });
           }}
           isLoading={generarPeriodica.isPending}
+          error={generarPeriodica.error?.message}
+        />
+      </Modal>
+
+      {/* Generate servicio modal (Demand) */}
+      <Modal open={generarServicioModal} onClose={() => setGenerarServicioModal(false)} title="Generar factura por servicio">
+        <GenerarServicioFormModal
+          reservas={reservasCompletadas}
+          onSubmit={(data) => {
+            generarServicio.mutate({ reserva_id: data.reserva_id });
+          }}
+          isLoading={generarServicio.isPending}
+          error={generarServicio.error?.message}
         />
       </Modal>
     </div>
@@ -321,10 +363,11 @@ export default function FacturacionPage() {
 
 // --- Generate Form ---
 
-function GenerarPeriodicaFormModal({ clientes, onSubmit, isLoading }: {
+function GenerarPeriodicaFormModal({ clientes, onSubmit, isLoading, error }: {
   clientes: SelectOption[];
   onSubmit: (data: GenerarPeriodicaForm) => void;
   isLoading: boolean;
+  error?: string;
 }) {
   const { register, handleSubmit } = useForm<GenerarPeriodicaForm>();
 
@@ -353,8 +396,49 @@ function GenerarPeriodicaFormModal({ clientes, onSubmit, isLoading }: {
         </div>
       </div>
       <p className="text-xs text-gray-400">Se calcularán automáticamente las horas, suplementos, materiales y gastos aprobados del período seleccionado.</p>
+      {error && <p className="text-sm text-red-600">{error}</p>}
       <div className="flex justify-end pt-2">
         <button type="submit" disabled={isLoading} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
+          {isLoading ? 'Generando...' : 'Generar factura'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// --- Generar Servicio Form (Demand) ---
+
+function GenerarServicioFormModal({ reservas, onSubmit, isLoading, error }: {
+  reservas: ReservaCompletada[];
+  onSubmit: (data: GenerarServicioForm) => void;
+  isLoading: boolean;
+  error?: string;
+}) {
+  const { register, handleSubmit } = useForm<GenerarServicioForm>();
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Reserva completada</label>
+        <select
+          {...register('reserva_id', { required: true })}
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+        >
+          <option value="">Seleccionar reserva...</option>
+          {reservas.map((r) => (
+            <option key={r.id} value={r.id}>
+              {format(parseISO(r.fecha_hora), "d MMM yyyy HH:mm", { locale: es })} — {r.cliente_nombre} — {r.servicio?.nombre ?? 'Servicio'}
+            </option>
+          ))}
+        </select>
+        {reservas.length === 0 && (
+          <p className="text-xs text-gray-400 mt-1">No hay reservas completadas pendientes de facturar.</p>
+        )}
+      </div>
+      <p className="text-xs text-gray-400">Se calculará el precio del servicio + materiales facturables + gastos aprobados del parte de trabajo cerrado.</p>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="flex justify-end pt-2">
+        <button type="submit" disabled={isLoading || reservas.length === 0} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors">
           {isLoading ? 'Generando...' : 'Generar factura'}
         </button>
       </div>
