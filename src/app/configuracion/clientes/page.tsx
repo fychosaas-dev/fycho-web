@@ -7,6 +7,7 @@ import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Modal } from '@/components/ui/Modal';
 import { Badge } from '@/components/ui/Badge';
+import { AddressAutocomplete, AddressResult } from '@/components/ui/AddressAutocomplete';
 
 // --- Types ---
 
@@ -36,8 +37,8 @@ type ClienteForm = {
   email_factura?: string;
   telefono?: string;
   radio_geofence_m: number;
-  lat?: string;
-  lng?: string;
+  lat?: number;
+  lng?: number;
   notas_internas?: string;
 };
 
@@ -105,15 +106,13 @@ export default function ClientesPage() {
       },
       email_factura: data.email_factura || null,
       telefono: data.telefono || null,
-      radio_geofence_m: data.radio_geofence_m,
+      radio_geofence_m: data.radio_geofence_m ?? 200,
       notas_internas: data.notas_internas || null,
     };
 
-    const lat = data.lat ? parseFloat(data.lat) : NaN;
-    const lng = data.lng ? parseFloat(data.lng) : NaN;
-    if (!isNaN(lat) && !isNaN(lng)) {
-      payload.lat = lat;
-      payload.lng = lng;
+    if (data.lat != null && data.lng != null) {
+      payload.lat = data.lat;
+      payload.lng = data.lng;
     }
 
     return payload;
@@ -151,7 +150,7 @@ export default function ClientesPage() {
                 <th className="text-left px-4 py-3 font-medium text-gray-600">NIF</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Email factura</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Teléfono</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Radio geofence</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Dirección</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-600">Acciones</th>
               </tr>
@@ -163,7 +162,7 @@ export default function ClientesPage() {
                   <td className="px-4 py-3 text-gray-600">{c.datos_fiscales?.nif ?? '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{c.email_factura ?? '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{c.telefono ?? '—'}</td>
-                  <td className="px-4 py-3 text-gray-600">{c.radio_geofence_m} m</td>
+                  <td className="px-4 py-3 text-gray-600 max-w-[200px] truncate">{c.datos_fiscales?.direccion ?? '—'}</td>
                   <td className="px-4 py-3">
                     <Badge color={c.activo ? 'green' : 'red'}>
                       {c.activo ? 'Activo' : 'Inactivo'}
@@ -237,7 +236,7 @@ function ClienteFormModal({
   isLoading: boolean;
   error?: string;
 }) {
-  const { register, handleSubmit, formState: { errors } } = useForm<ClienteForm>({
+  const { register, handleSubmit, setValue, formState: { errors } } = useForm<ClienteForm>({
     defaultValues: editing
       ? {
           nombre: editing.nombre,
@@ -252,6 +251,19 @@ function ClienteFormModal({
           radio_geofence_m: 200,
         },
   });
+
+  function handleAddressSelect(result: AddressResult) {
+    setValue('direccion', result.direccion);
+    setValue('lat', result.lat);
+    setValue('lng', result.lng);
+    setValue('radio_geofence_m', 200);
+  }
+
+  function handleAddressClear() {
+    setValue('direccion', '');
+    setValue('lat', undefined);
+    setValue('lng', undefined);
+  }
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -284,12 +296,15 @@ function ClienteFormModal({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
-        <input
-          {...register('direccion')}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          placeholder="Calle, número, ciudad"
+        <label className="block text-sm font-medium text-gray-700 mb-1">Dirección del servicio</label>
+        <AddressAutocomplete
+          defaultValue={editing?.datos_fiscales?.direccion ?? undefined}
+          onSelect={handleAddressSelect}
+          onClear={handleAddressClear}
         />
+        <p className="text-xs text-gray-400 mt-1">
+          Busca la dirección y selecciona de la lista. Se calcularán las coordenadas GPS automáticamente con radio de geofencing de 200m.
+        </p>
       </div>
 
       <div>
@@ -300,42 +315,6 @@ function ClienteFormModal({
           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         />
         {errors.email_factura && <p className="text-sm text-red-600 mt-1">{errors.email_factura.message}</p>}
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Radio geofencing (metros)
-        </label>
-        <input
-          type="number"
-          {...register('radio_geofence_m')}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-        />
-        <p className="text-xs text-gray-400 mt-1">Mínimo 50m, máximo 5000m</p>
-        {errors.radio_geofence_m && <p className="text-sm text-red-600 mt-1">{errors.radio_geofence_m.message}</p>}
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Latitud</label>
-          <input
-            type="number"
-            step="any"
-            {...register('lat')}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            placeholder="40.4168"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Longitud</label>
-          <input
-            type="number"
-            step="any"
-            {...register('lng')}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            placeholder="-3.7038"
-          />
-        </div>
       </div>
 
       <div>

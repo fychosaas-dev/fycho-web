@@ -43,6 +43,14 @@ type GenerarServicioForm = {
   reserva_id: string;
 };
 
+type FacturaSimpleForm = {
+  cliente_id: string;
+  concepto: string;
+  importe: number;
+  iva_pct: number;
+  notas: string;
+};
+
 const estadoColor: Record<string, string> = {
   borrador: 'gray',
   aprobada: 'blue',
@@ -66,6 +74,7 @@ export default function FacturacionPage() {
   const [filtroEstado, setFiltroEstado] = useState('');
   const [filtroFecha, setFiltroFecha] = useState('');
   const [generarPeriodicaModal, setGenerarPeriodicaModal] = useState(false);
+  const [facturaSimpleModal, setFacturaSimpleModal] = useState(false);
   const [generarServicioModal, setGenerarServicioModal] = useState(false);
 
   // Tipo is implicit per tab: Teams → periodica, Demand → servicio
@@ -124,6 +133,15 @@ export default function FacturacionPage() {
     },
   });
 
+  // Create simple invoice mutation (Teams)
+  const crearSimple = useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.post('/api/billing/facturas/crear-simple', body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['facturas'] });
+      setFacturaSimpleModal(false);
+    },
+  });
+
   // Generate servicio mutation (Demand)
   const generarServicio = useMutation({
     mutationFn: (body: Record<string, unknown>) => api.post('/api/billing/facturas/generar-servicio', body),
@@ -160,13 +178,22 @@ export default function FacturacionPage() {
           <p className="text-gray-500 mt-1">Generación y gestión de facturas.</p>
         </div>
         {tab === 'teams' ? (
-          <button
-            onClick={() => setGenerarPeriodicaModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Generar factura periódica
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setGenerarPeriodicaModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Factura periódica
+            </button>
+            <button
+              onClick={() => setFacturaSimpleModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-white text-blue-600 border border-blue-300 rounded-lg hover:bg-blue-50 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Factura simple
+            </button>
+          </div>
         ) : (
           <button
             onClick={() => setGenerarServicioModal(true)}
@@ -346,6 +373,28 @@ export default function FacturacionPage() {
         />
       </Modal>
 
+      {/* Factura simple modal (Teams) */}
+      <Modal open={facturaSimpleModal} onClose={() => setFacturaSimpleModal(false)} title="Factura simple">
+        <FacturaSimpleFormModal
+          clientes={clientes}
+          onSubmit={(data) => {
+            crearSimple.mutate({
+              cliente_id: data.cliente_id,
+              lineas: [{
+                concepto: data.concepto,
+                tipo: 'servicio',
+                cantidad: 1,
+                precio_unitario: Number(data.importe),
+                iva_pct: Number(data.iva_pct),
+              }],
+              notas: data.notas || undefined,
+            });
+          }}
+          isLoading={crearSimple.isPending}
+          error={crearSimple.error?.message}
+        />
+      </Modal>
+
       {/* Generate servicio modal (Demand) */}
       <Modal open={generarServicioModal} onClose={() => setGenerarServicioModal(false)} title="Generar factura por servicio">
         <GenerarServicioFormModal
@@ -400,6 +449,82 @@ function GenerarPeriodicaFormModal({ clientes, onSubmit, isLoading, error }: {
       <div className="flex justify-end pt-2">
         <button type="submit" disabled={isLoading} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
           {isLoading ? 'Generando...' : 'Generar factura'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// --- Factura Simple Form (Teams) ---
+
+function FacturaSimpleFormModal({ clientes, onSubmit, isLoading, error }: {
+  clientes: SelectOption[];
+  onSubmit: (data: FacturaSimpleForm) => void;
+  isLoading: boolean;
+  error?: string;
+}) {
+  const { register, handleSubmit } = useForm<FacturaSimpleForm>({
+    defaultValues: { iva_pct: 21 },
+  });
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Cliente</label>
+        <select
+          {...register('cliente_id', { required: true })}
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        >
+          <option value="">Seleccionar cliente...</option>
+          {clientes.map((c) => (
+            <option key={c.id} value={c.id}>{c.nombre}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Concepto</label>
+        <input
+          {...register('concepto', { required: true })}
+          placeholder="Ej: Servicio extraordinario de limpieza"
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Importe base (€)</label>
+          <input
+            type="number"
+            step="0.01"
+            {...register('importe', { required: true, setValueAs: (v) => v === '' ? 0 : Number(v) })}
+            placeholder="150.00"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">IVA</label>
+          <select
+            {...register('iva_pct', { setValueAs: (v) => Number(v) })}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value={21}>21%</option>
+            <option value={10}>10%</option>
+            <option value={0}>0% (Exento)</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Notas <span className="text-gray-400 font-normal">(opcional)</span></label>
+        <textarea
+          {...register('notas')}
+          rows={2}
+          placeholder="Notas internas..."
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+        />
+      </div>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="flex justify-end pt-2">
+        <button type="submit" disabled={isLoading} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
+          {isLoading ? 'Creando...' : 'Crear factura'}
         </button>
       </div>
     </form>
