@@ -290,9 +290,9 @@ export default function FacturacionPage() {
                     </Badge>
                   </td>
                   <td className="px-4 py-3 text-gray-600">
-                    {format(parseISO(f.fecha), "d MMM yyyy", { locale: es })}
+                    {f.fecha ? format(parseISO(f.fecha), "d MMM yyyy", { locale: es }) : '—'}
                   </td>
-                  <td className="px-4 py-3 font-medium text-gray-900">{f.total.toFixed(2)} €</td>
+                  <td className="px-4 py-3 font-medium text-gray-900">{f.total != null ? f.total.toFixed(2) : '0.00'} €</td>
                   <td className="px-4 py-3">
                     <Badge color={estadoColor[f.estado] ?? 'gray'}>{f.estado}</Badge>
                   </td>
